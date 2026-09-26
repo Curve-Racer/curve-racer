@@ -38,12 +38,13 @@ export const GAME_ADDRESS = (process.env.NEXT_PUBLIC_GAME_ADDRESS || '0x00000000
 export const isGameDeployed = GAME_ADDRESS !== '0x0000000000000000000000000000000000000000';
 
 /**
- * The vibe/vibe bonding curve the game prices off.
+ * The Pons bonding curve the game prices off — the curve for $RACER.
  *
  * Defaults to the game address, which is only correct when CurveRacer is
  * deployed with a curve that happens to sit at the same address. Set
- * NEXT_PUBLIC_CURVE_ADDRESS to the real curve — the live testnet curve used
- * during development was 0x7bc42e8a2df6070ae7d1ca720cd5408e8354fc20.
+ * NEXT_PUBLIC_CURVE_ADDRESS to the real curve — the live testnet curve is
+ * 0x6627e9133a81f01c95c461bf71402a9000d06c45, whose token() is
+ * 0xc9A12f02A2aeB173154552179b6ec70A16533678.
  */
 export const CURVE_ADDRESS = (process.env.NEXT_PUBLIC_CURVE_ADDRESS || GAME_ADDRESS) as `0x${string}`;
 

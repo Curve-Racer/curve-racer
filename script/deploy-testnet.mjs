@@ -28,9 +28,12 @@ const testnet = defineChain({
   testnet: true,
 });
 
-// Live vibe/vibe curve verified on-chain 2026-09-26: spotPriceWad 1907610516.
-const CURVE = '0x7bc42e8a2df6070ae7d1ca720cd5408e8354fc20';
-const TOKEN = '0x478c36fd287d2c600f42859ba9561fd46b230e2d';
+// $RACER — the relaunched token, with its curve verified on-chain 2026-09-26.
+// curve.token() points back at this token, and curve.factory() is the live
+// Pons factory 0x40f1be6faf8DAB9C143cce1a0A04c2075Fb2DF59.
+// The earlier deploy used a stale vibe curve and is orphaned; do not reuse.
+const CURVE = '0x6627e9133a81f01c95c461bf71402a9000d06c45';
+const TOKEN = '0xc9A12f02A2aeB173154552179b6ec70A16533678';
 
 const artifact = (n) =>
   JSON.parse(readFileSync(new URL(`../out/${n}.json`, import.meta.url), 'utf8'));
@@ -42,7 +45,9 @@ const VIBE_CURVE = [
 ];
 
 async function main() {
-  const wallets = JSON.parse(readFileSync(new URL('file:///home/administrator/.hermes/profiles/hunter/wallets/robinhood-testnet.json'), 'utf8'));
+  // Deploy from the FRESH game/token deployer wallet, not the sniper creator
+  // wallet — keeps the deploy key out of the bot's blast radius.
+  const wallets = JSON.parse(readFileSync(new URL('file:///home/administrator/curve-racer/curve-racer-wallet.json'), 'utf8'));
   const pk = wallets.privateKey || wallets.key || wallets.private_key;
   if (!pk) throw new Error('no privateKey in robinhood-testnet.json');
   const acct = privateKeyToAccount(pk.startsWith('0x') ? pk : '0x' + pk);

@@ -1,4 +1,24 @@
 import GameBoard from '@/components/GameBoard';
+import type { Metadata } from 'next';
+
+const DESCRIPTION =
+  'Stake ETH, ride a live bonding curve for 30 seconds, highest PnL takes the pot.';
+
+export const metadata: Metadata = {
+  title: 'Curve Racer',
+  description: DESCRIPTION,
+  openGraph: {
+    title: 'Curve Racer',
+    description: DESCRIPTION,
+    type: 'website',
+  },
+};
+
+const SOCIALS = {
+  telegram: 'https://t.me/curveracerann',
+  twitter: 'https://x.com/curveracereth',
+  website: 'https://curve-racer.vercel.app',
+};
 
 export default function Page() {
   return (
@@ -11,14 +31,19 @@ export default function Page() {
       <p className="tag">
         Stake ETH &middot; ride a live bonding curve for 30s &middot; highest PnL takes the pot
       </p>
-      {process.env.NEXT_PUBLIC_IS_LOCAL === 'true' && (
-        <div className="banner info">
-          <b>Local anvil mode</b> &mdash; no real funds, no real chain. Add network
-          {' '}<code>Anvil (local)</code> to your wallet: RPC <code>http://127.0.0.1:8545</code>, chain ID{' '}
-          <code>31337</code>. See <code>script/deploy-local.mjs</code> for funded demo keys.
-        </div>
-      )}
+
       <GameBoard />
+
+      <nav
+        style={{ marginTop: '2rem', display: 'flex', gap: '1rem', justifyContent: 'center' }}
+      >
+        <a href={SOCIALS.telegram} target="_blank" rel="noreferrer noopener">
+          Telegram
+        </a>
+        <a href={SOCIALS.twitter} target="_blank" rel="noreferrer noopener">
+          X
+        </a>
+      </nav>
     </main>
   );
 }
