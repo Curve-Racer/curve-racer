@@ -2,10 +2,17 @@ import { formatEther, formatUnits, type Address } from 'viem';
 import { publicClient, GAME_ADDRESS } from './chain';
 import { CURVE_RACER_ABI, VIBE_CURVE_ABI } from './abi';
 
+/**
+ * Must match CurveRacer.Phase in the contract:
+ *   Idle = 0, Open = 1, Settled = 2
+ * This was previously (Open=0, Settled=1, Closed=2), which decoded a live
+ * Open round (on-chain value 1) as "Settled" — the UI showed a closed round
+ * while the contract was still accepting entries.
+ */
 export enum Phase {
-  Open = 0,
-  Settled = 1,
-  Closed = 2,
+  Idle = 0,
+  Open = 1,
+  Settled = 2,
 }
 
 export interface RoundState {
@@ -121,4 +128,19 @@ export async function readPnl(stake: bigint, entry: bigint, exit: bigint): Promi
 
 export async function readBlockNumber(): Promise<bigint> {
   return publicClient.getBlockNumber();
+}
+
+/**
+ * Seconds left in the current round, straight from the contract.
+ *
+ * This is the authority on whether a round is open. The UI must NOT derive
+ * this from `closeBlock - clientBlockNumber`: the RPC's head and the round's
+ * stored block numbers are not on a scale you can safely subtract, and doing
+ * so reported a live round as closed. The contract already computes the
+ * comparison itself, so read it and trust it.
+ */
+export async function readSecondsRemaining(): Promise<bigint> {
+  return (await publicClient.readContract({
+    address: GAME_ADDRESS, abi: CURVE_RACER_ABI, functionName: 'secondsRemaining',
+  })) as bigint;
 }

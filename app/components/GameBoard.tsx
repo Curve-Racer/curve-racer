@@ -6,6 +6,7 @@ import { publicClient, GAME_ADDRESS, CURVE_ADDRESS, activeChain, isGameDeployed,
 import { CURVE_RACER_ABI, VIBE_CURVE_ABI } from '@/lib/abi';
 import {
   Phase, readRoundState, readCurrentRoundId, readEntrants, readEntry, readConfig, readPnl,
+  readSecondsRemaining,
   type RoundState, type Entry,
 } from '@/lib/game';
 import { formatEth, formatSpot, shortAddress } from '@/lib/game';
@@ -37,7 +38,6 @@ export default function GameBoard() {
   const [myEntry, setMyEntry] = useState<Player | null>(null);
   const [spot, setSpot] = useState<bigint>(ZERO);
   const [entryPrice, setEntryPrice] = useState<bigint>(ZERO);
-  const [block, setBlock] = useState<bigint>(ZERO);
   const [cfg, setCfg] = useState<{
     roundBlocks: bigint; minEntrants: bigint; rakeBps: bigint;
     assetForWager: Address; custodyAvailable: boolean; treasury: Address;
@@ -47,6 +47,9 @@ export default function GameBoard() {
   const [busy, setBusy] = useState(false);
   const [lastTx, setLastTx] = useState<`0x${string}` | null>(null);
   const [error, setError] = useState<string>('');
+  // Seconds left, read from the contract. null means "not read yet" — the
+  // old code started at 0, which rendered as "closed" before the first poll.
+  const [secsLeft, setSecsLeft] = useState<number | null>(null);
 
   const curveAddress = useMemo(() => CURVE_ADDRESS, []);
 
@@ -94,7 +97,6 @@ export default function GameBoard() {
         const e: Entry = await readEntry(id, account);
         setMyEntry({ stake: e.stake, refundClaimed: e.refundClaimed, paidOut: e.paidOut });
       }
-      setBlock(await publicClient.getBlockNumber());
     } catch (e) { setError(String(e).slice(0, 160)); }
     // spot is intentionally not a dependency: it updates on its own 2s poll and
     // re-reading every entrant on each tick would hammer the RPC.
@@ -139,30 +141,43 @@ export default function GameBoard() {
     );
   }, [spot, round]);
 
-  // Block ticker drives the countdown and auto-picks up new blocks.
+  // Countdown ticker. Reads secondsRemaining() from the contract rather than
+  // subtracting block numbers locally — the RPC head and the round's stored
+  // closeBlock are not on a comparable scale, and the local arithmetic made a
+  // live round look closed. 1s cadence matches the ~30s round.
   useEffect(() => {
+    if (!isGameDeployed) return;
     let alive = true;
-    const tick = async () => { if (alive) setBlock(await publicClient.getBlockNumber().catch(() => ZERO)); };
+    const tick = async () => {
+      try {
+        const s = await readSecondsRemaining();
+        if (alive) setSecsLeft(Number(s));
+      } catch { /* keep the last good value */ }
+    };
+    tick();
     const t = setInterval(tick, 1000);
     return () => { alive = false; clearInterval(t); };
   }, []);
 
   // --- derived ------------------------------------------------------------
-  const blocksLeft = round ? (round.closeBlock > block ? round.closeBlock - block : ZERO) : ZERO;
-  const msLeft = Number(blocksLeft) * MS_PER_BLOCK;
-  const secsLeft = Math.max(0, Math.ceil(msLeft / 1000));
-  const totalBlocks = cfg ? Number(cfg.roundBlocks) : 300;
-  const elapsed = round ? Math.min(totalBlocks, Math.max(0, totalBlocks - Number(blocksLeft))) : 0;
-  const progress = totalBlocks ? (elapsed / totalBlocks) * 100 : 0;
+  const totalSecs = cfg ? Math.round(Number(cfg.roundBlocks) * MS_PER_BLOCK / 1000) : 30;
+  const secs = secsLeft ?? 0;
+  const elapsed = Math.min(totalSecs, Math.max(0, totalSecs - secs));
+  const progress = totalSecs ? (elapsed / totalSecs) * 100 : 0;
 
   const projected = useMemo(() => {
     if (!myEntry || myEntry.stake === ZERO || entryPrice === ZERO) return null;
     return (myEntry.stake * (spot - entryPrice)) / entryPrice;
   }, [myEntry, spot, entryPrice]);
 
-  const isOpen = round?.phase === Phase.Open && blocksLeft > ZERO;
+  // Open = the contract says Open AND its own clock has not run out. Both come
+  // from chain reads now, so the UI cannot contradict the contract.
+  const isOpen = round?.phase === Phase.Open && secsLeft !== null && secsLeft > 0;
   const canEnter = isOpen && account && (!myEntry || myEntry.stake === ZERO);
   const needMore = cfg && entrants.length < Number(cfg.minEntrants);
+  // The round is over once the contract's clock hits zero, so anyone can
+  // settle it — not just people who staked.
+  const canSettle = round?.phase === Phase.Open && secsLeft !== null && secsLeft === 0;
 
   // --- writes -------------------------------------------------------------
   const sendTx = async (fn: string, args: unknown[], value?: bigint) => {
@@ -250,16 +265,18 @@ export default function GameBoard() {
 
           <div className="card">
             <h2>Round {roundId.toString()}</h2>
-            <div className="countdown" style={{ color: secsLeft <= 5 ? 'var(--pink)' : undefined }}>
-              {secsLeft > 0 ? `${secsLeft}s` : (round?.phase === Phase.Open ? '0s' : 'closed')}
+            <div className="countdown" style={{ color: secs <= 5 ? 'var(--pink)' : undefined }}>
+              {secsLeft === null ? '—' : secs > 0 ? `${secs}s` : (round?.phase === Phase.Open ? '0s' : 'closed')}
             </div>
             <div className="progress"><div style={{ width: `${progress}%` }} /></div>
             <div className="row" style={{ marginTop: 10 }}>
               <span className="k">Status</span>
               <span className="v">
-                {round?.phase === Phase.Open && blocksLeft > ZERO
+                {isOpen
                   ? <span className="pill live">OPEN</span>
-                  : <span className="pill">SETTLED</span>}
+                  : canSettle
+                    ? <span className="pill live">CLOSED · READY TO SETTLE</span>
+                    : <span className="pill">SETTLED</span>}
               </span>
             </div>
             <div className="row"><span className="k">Entrants</span><span className="v">{entrants.length} / {cfg ? cfg.minEntrants.toString() : '—'} min</span></div>
@@ -291,9 +308,6 @@ export default function GameBoard() {
                 {myEntry && myEntry.stake > ZERO ? (
                   <>
                     <p className="muted" style={{ fontSize: 13 }}>You&apos;re in this round. Highest PnL at close wins the pot.</p>
-                    <button className="ghost" onClick={settle} disabled={busy || blocksLeft > ZERO}>
-                      {blocksLeft > ZERO ? `Settle in ${secsLeft}s` : 'Settle round'}
-                    </button>
                   </>
                 ) : (
                   <>
@@ -309,6 +323,15 @@ export default function GameBoard() {
                       Min {cfg ? cfg.minEntrants.toString() : '2'} players. A solo round is voided and fully refunded.
                     </p>
                   </>
+                )}
+                {/* Settling is permissionless on-chain. Show it to anyone once
+                    the contract's clock hits zero, otherwise a round that
+                    nobody staked in can never be closed from the UI. */}
+                {canSettle && (
+                  <button className="ghost" onClick={settle} disabled={busy}
+                          style={{ marginTop: 12, width: '100%' }}>
+                    Settle round {roundId.toString()} &amp; open next
+                  </button>
                 )}
               </>
             )}
