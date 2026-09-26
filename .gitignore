@@ -1,7 +1,13 @@
 cache/
 out/
-.env
-.env.local
 node_modules
 .next/
 tsconfig.tsbuildinfo
+
+# Never commit keys or secrets.
+# The Curve Racer deployer/creator key lives here and must stay local.
+curve-racer-wallet.json
+*-wallet.json
+.env
+.env.local
+.env.production
