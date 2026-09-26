@@ -1,0 +1,20 @@
+[profile.default]
+src = "contracts"
+out = "out"
+libs = ["lib"]
+test = "test"
+solc = "0.8.24"
+optimizer = true
+optimizer_runs = 200
+# Required: the settlement payout loop carries more live locals than the legacy
+# code generator allows on the 16-slot EVM stack. viaIR compiles via the Yul
+# IR pipeline, which does not have that limit and also produces tighter code.
+via_ir = true
+evm_version = "cancun"
+fs_permissions = [{ access = "read", path = "./out" }]
+
+[rpc_endpoints]
+robinhoodTestnet = "https://robinhood-testnet.drpc.org"
+
+[etherscan]
+robinhoodTestnet = { key = "" }

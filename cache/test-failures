@@ -1,0 +1,1 @@
+{"version":1,"failures":[{"contract":"test/CurveRacer.t.sol:CurveRacerTest","test":"test_CurveCompletionArmsCustody"}]}
