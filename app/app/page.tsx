@@ -11,6 +11,13 @@ export default function Page() {
       <p className="tag">
         Stake ETH &middot; ride a live bonding curve for 30s &middot; highest PnL takes the pot
       </p>
+      {process.env.NEXT_PUBLIC_IS_LOCAL === 'true' && (
+        <div className="banner info">
+          <b>Local anvil mode</b> &mdash; no real funds, no real chain. Add network
+          {' '}<code>Anvil (local)</code> to your wallet: RPC <code>http://127.0.0.1:8545</code>, chain ID{' '}
+          <code>31337</code>. See <code>script/deploy-local.mjs</code> for funded demo keys.
+        </div>
+      )}
       <GameBoard />
     </main>
   );

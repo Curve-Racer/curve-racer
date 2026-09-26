@@ -373,6 +373,39 @@ contract CurveRacerTest is Test {
     // round rotation
     // -----------------------------------------------------------------
 
+    /// @dev Regression: a round that expires with ZERO entrants used to
+    ///      divide by zero (`amount / n2`) and revert, which permanently
+    ///      bricked settle() — and since settle() is the only path that opens
+    ///      the next round, the whole game would be unplayable after the first
+    ///      empty round. Found by playing against a live anvil node.
+    function test_SettleWithZeroEntrantsDoesNotBrick() public {
+        _closeRoundWindow();
+
+        // Nobody entered. This must not revert.
+        game.settle();
+
+        (, , , CurveRacer.Phase phase, , , , , bool voided) = game.roundState(1);
+        assertEq(uint8(phase), uint8(CurveRacer.Phase.Settled), "empty round should settle");
+        assertTrue(voided, "empty round should be voided");
+        assertEq(game.currentRoundId(), 2, "a fresh round must open");
+    }
+
+    /// @dev The round after an empty one must still be playable, proving the
+    ///      game recovers rather than merely avoiding the revert.
+    function test_GameRecoversAfterEmptyRound() public {
+        _closeRoundWindow();
+        game.settle();
+
+        vm.prank(alice);
+        game.enter{value: 1 ether}();
+        vm.prank(bob);
+        game.enter{value: 2 ether}();
+
+        (, , , CurveRacer.Phase phase, uint256 total, , , , ) = game.roundState(2);
+        assertEq(uint8(phase), uint8(CurveRacer.Phase.Open), "round 2 should be open");
+        assertEq(total, 3 ether, "round 2 should hold both stakes");
+    }
+
     function test_SettleOpensNextRound() public {
         _enterRound();
         vm.prank(bob);

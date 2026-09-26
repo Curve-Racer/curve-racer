@@ -5,11 +5,28 @@ and iteration history behind the project.
 
 ## Tooling
 
+One agent, one continuous session. No tool-switching mid-build.
+
 | Stage | Tool | Model |
 |---|---|---|
-| Chain reconnaissance, interface recovery, design | Hermes Agent (Hermes profile `hunter`) | `stealth/space-bunny-alpha` |
-| Contracts, interfaces, tests | Claude Code via Hermes terminal | same session |
-| Frontend | Next.js 14 + viem | same session |
+| Chain reconnaissance, interface recovery, design, contracts, tests, frontend | Hermes Agent (profile `hunter`) | `stealth/space-bunny-alpha` (provider: Nous) |
+
+Supporting toolchain (not agents):
+
+- **Foundry 1.8.3** — `forge` for compile/test/deploy, `anvil` for local chains, `cast` for calldata
+- **solc 0.8.24 with `viaIR`** — required; the settlement payout loop exceeds the legacy 16-slot EVM stack
+- **Next.js 14.2.35 + viem 2.x** — the game frontend
+- **Python 3.11** — on-chain probes, bytecode opcode walking, keccak digests
+- **kubo 0.30.0 / Pinata** — IPFS pinning of the token image and metadata
+
+### On tool disclosure
+
+The build used a single AI agent end to end. An earlier revision of this file
+listed the contract stage as "Claude Code" and the frontend stage as
+"Next.js + viem", which overstated the variety of AI tooling involved — Next.js
+is a framework, not an agent, and no second agent was used. Corrected here
+because this submission is specifically judged on an honest account of the AI
+process.
 
 ## What the AI was asked to do, in order
 

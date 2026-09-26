@@ -1,22 +1,35 @@
 import { createPublicClient, http, defineChain, type PublicClient } from 'viem';
 
-// Robinhood Chain Testnet, verified on-chain 2026-09-26.
-export const robinhoodTestnet = defineChain({
-  id: 46630,
-  name: 'Robinhood Chain Testnet',
+const RPC_URL = process.env.NEXT_PUBLIC_RPC_URL || 'https://robinhood-testnet.drpc.org';
+const CHAIN_ID = Number(process.env.NEXT_PUBLIC_CHAIN_ID || 46630);
+const IS_LOCAL = process.env.NEXT_PUBLIC_IS_LOCAL === 'true';
+
+const EXPLORER = IS_LOCAL
+  ? 'http://127.0.0.1:8545'
+  : 'https://explorer.testnet.chain.robinhood.com';
+
+/**
+ * Chain config is env-driven so the same build runs against local anvil
+ * (31337) and Robinhood Chain Testnet (46630) without code changes. The
+ * local branch exists for the two-player demo and needs no block explorer,
+ * so tx links are only emitted when one is configured.
+ */
+export const activeChain = defineChain({
+  id: CHAIN_ID,
+  name: IS_LOCAL ? 'Anvil (local)' : 'Robinhood Chain Testnet',
   nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 },
-  rpcUrls: {
-    default: { http: [process.env.NEXT_PUBLIC_RPC_URL || 'https://robinhood-testnet.drpc.org'] },
-  },
+  rpcUrls: { default: { http: [RPC_URL] } },
   blockExplorers: {
-    default: { name: 'Robinhood Explorer', url: 'https://explorer.testnet.chain.robinhood.com' },
+    default: { name: 'Block Explorer', url: EXPLORER },
   },
   testnet: true,
 });
 
+export const hasExplorer = !IS_LOCAL;
+
 export const publicClient: PublicClient = createPublicClient({
-  chain: robinhoodTestnet,
-  transport: http(robinhoodTestnet.rpcUrls.default.http[0], { timeout: 20_000 }),
+  chain: activeChain,
+  transport: http(RPC_URL, { timeout: 20_000 }),
 });
 
 /** Deployed game address. Set NEXT_PUBLIC_GAME_ADDRESS once deployed. */
@@ -35,6 +48,6 @@ export const isGameDeployed = GAME_ADDRESS !== '0x000000000000000000000000000000
 export const CURVE_ADDRESS = (process.env.NEXT_PUBLIC_CURVE_ADDRESS || GAME_ADDRESS) as `0x${string}`;
 
 export const explorerTx = (hash: `0x${string}`) =>
-  `${robinhoodTestnet.blockExplorers.default.url}/tx/${hash}`;
+  `${activeChain.blockExplorers.default.url}/tx/${hash}`;
 export const explorerAddress = (a: `0x${string}`) =>
-  `${robinhoodTestnet.blockExplorers.default.url}/address/${a}`;
+  `${activeChain.blockExplorers.default.url}/address/${a}`;

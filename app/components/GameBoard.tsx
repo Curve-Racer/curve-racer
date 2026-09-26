@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { createWalletClient, custom, http, parseEther, type Address } from 'viem';
-import { publicClient, GAME_ADDRESS, CURVE_ADDRESS, robinhoodTestnet, isGameDeployed, explorerTx } from '@/lib/chain';
+import { publicClient, GAME_ADDRESS, CURVE_ADDRESS, activeChain, isGameDeployed, hasExplorer, explorerTx } from '@/lib/chain';
 import { CURVE_RACER_ABI, VIBE_CURVE_ABI } from '@/lib/abi';
 import {
   Phase, readRoundState, readCurrentRoundId, readEntrants, readEntry, readConfig, readPnl,
@@ -10,7 +10,9 @@ import {
 } from '@/lib/game';
 import { formatEth, formatSpot, shortAddress } from '@/lib/game';
 
-// ~100ms blocks on Robinhood Chain Testnet, so 300 blocks is about 30s.
+// Robinhood Chain Testnet produces a block roughly every 100ms, which is what
+// makes the 300-block window land on a ~30 second round. Anvil's --block-time
+// is set to match so local timing mirrors the real chain.
 const MS_PER_BLOCK = 100;
 const ZERO = 0n;
 
@@ -168,7 +170,7 @@ export default function GameBoard() {
     const eth = (window as unknown as { ethereum?: unknown }).ethereum;
     if (!eth) throw new Error('No browser wallet found.');
     // @ts-expect-error injected provider shape
-    const wallet = createWalletClient({ chain: robinhoodTestnet, transport: custom(eth) });
+    const wallet = createWalletClient({ chain: activeChain, transport: custom(eth) });
     const hash = await wallet.writeContract({
       address: GAME_ADDRESS, abi: CURVE_RACER_ABI,
       functionName: fn as never, args: args as never, value, account,
@@ -209,7 +211,12 @@ export default function GameBoard() {
   return (
     <>
       {error && <div className="banner">⚠ {error}</div>}
-      {status && <div className="banner info">{status} {lastTx && <a href={explorerTx(lastTx)} target="_blank" rel="noreferrer">view tx</a>}</div>}
+      {status && (
+        <div className="banner info">
+          {status}{' '}
+          {lastTx && hasExplorer && <a href={explorerTx(lastTx)} target="_blank" rel="noreferrer">view tx</a>}
+        </div>
+      )}
 
       <div className="grid">
         {/* ---------------- left column ---------------- */}

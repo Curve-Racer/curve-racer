@@ -234,7 +234,17 @@ contract CurveRacer {
         uint256 exitPriceWad = _spotPrice();
         uint256 entryPriceWad = r.entryPriceWad;
 
-        if (r.entrants.length < MIN_ENTRANTS) {
+        if (r.entrants.length == 0) {
+            // No one played. There is nothing to refund and, critically,
+            // `amount / n2` below would divide by zero and revert — which
+            // would brick settle() permanently, since it is the only path
+            // that opens the next round. A round can legitimately expire with
+            // zero entrants (no players joined, or all were already refunded),
+            // so this case must be handled before the division.
+            r.phase = Phase.Settled;
+            r.voided = true;
+            emit RoundVoided(settledId, new address[](0), 0);
+        } else if (r.entrants.length < MIN_ENTRANTS) {
             address[] memory entrantsList = r.entrants;
             uint256 n2 = entrantsList.length;
             uint256 amount = r.totalStake;
