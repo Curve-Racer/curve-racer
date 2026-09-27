@@ -122,13 +122,15 @@ export function joinLabel(s: PlayState): JoinLabel {
   };
 }
 
+export type PillTone = 'default' | 'live' | 'armed' | 'settled';
+
 /** The status pill above the board. */
 export function statusPill(
   phase: Phase | null,
   secsLeft: number | null
-): { text: string; tone: 'live' | 'armed' | 'idle' | 'settled' } {
-  if (phase === null) return { text: 'LOADING', tone: 'idle' };
-  if (phase === 2) return { text: 'SETTLED', tone: 'idle' };
+): { text: string; tone: PillTone } {
+  if (phase === null) return { text: 'LOADING', tone: 'default' };
+  if (phase === 2) return { text: 'SETTLED', tone: 'settled' };
   if (secsLeft === 0) return { text: 'CLOSED · SETTLING', tone: 'armed' };
   if (secsLeft !== null && secsLeft <= 5) return { text: 'CLOSING', tone: 'armed' };
   return { text: 'LIVE', tone: 'live' };

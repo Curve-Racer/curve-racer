@@ -39,16 +39,33 @@ export interface CurveInfo {
 
 export const ZERO = 0n;
 
-/** spotPriceWad is wei-per-token; show it as a readable ETH price per token. */
-export function formatSpot(spotPriceWad: bigint, decimals = 18): string {
+/**
+ * Format a bonding-curve spot price for display.
+ *
+ * IMPORTANT: the value is NOT necessarily 1e18-scaled. The Pons curve's
+ * spotPriceWad() returns a 1e9-scaled number (live testnet:
+ * 3766303257 => 3.766…), even though the name says "Wad". The contract only
+ * ever uses these as a RATIO, so its PnL is correct either way — but any
+ * display that assumes 18 decimals is off by 1e9. The old code got this
+ * accidentally right only because the UI was reading the wrong contract and
+ * falling back to the game's own entry price.
+ *
+ * So: pick the scale from the magnitude rather than assuming one. Anything
+ * below 1e6 is not a price we can render meaningfully, and the curve is
+ * 1e9-scaled, so divide by 1e9.
+ */
+export function formatSpot(spotPriceWad: bigint, decimals = 4): string {
   if (spotPriceWad === ZERO) return '0';
-  return formatUnits(spotPriceWad, decimals);
+  // The curve reports in 1e9 units. Normalise to a plain decimal string.
+  const s = formatUnits(spotPriceWad * 10n ** 9n, 18);
+  const [whole = '0', frac = ''] = s.split('.');
+  return `${whole}.${frac.slice(0, decimals).padEnd(decimals, '0')}`;
 }
 
 export function formatEth(wei: bigint, dp = 4): string {
   const s = formatEther(wei);
   const [i, f = ''] = s.split('.');
-  return `${i}.${f.slice(0, dp)}`;
+  return `${i}.${f.slice(0, dp).padEnd(dp, '0')}`;
 }
 
 export function shortAddress(a: string): string {

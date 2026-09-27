@@ -63,7 +63,8 @@ export function Sparkline({
       ? y(entryPrice)
       : null;
 
-    return { line, area, rising, entryY, first: pts[0], last: pts[pts.length - 1] };
+    return { line, area, rising, entryY, first: pts[0], last: pts[pts.length - 1],
+             lastX: x(pts.length - 1), lastY: y(pts[pts.length - 1]) };
   }, [points, width, height, entryPrice]);
 
   if (!geometry) {
@@ -98,6 +99,13 @@ export function Sparkline({
 
       {showArea && <polygon points={geometry.area} fill={`url(#${gid})`} />}
 
+      {/* Baseline: without it a flat series renders as a bare rule floating in
+          the card and reads as a divider rather than a chart. */}
+      <line
+        x1="0" x2={width} y1={height - 1} y2={height - 1}
+        stroke="hsl(var(--border))" strokeWidth="1"
+      />
+
       {geometry.entryY !== null && (
         <line
           x1="0" x2={width}
@@ -116,6 +124,14 @@ export function Sparkline({
         strokeWidth="1.75"
         strokeLinejoin="round"
         strokeLinecap="round"
+      />
+
+      {/* Current-value marker, so the eye can find "now" on the line. */}
+      <circle
+        cx={geometry.lastX - 2}
+        cy={geometry.lastY}
+        r="2.75"
+        fill={stroke}
       />
     </svg>
   );
