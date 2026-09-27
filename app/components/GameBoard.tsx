@@ -363,9 +363,15 @@ export default function GameBoard() {
                     </div>
                     <button onClick={enter} disabled={!canEnter || busy}>
                       {!isOpen
-                        ? `Enter & start a fresh round ${roundId.toString() + 1n}`
-                        : needMore ? 'Waiting for players…' : `Enter round ${roundId.toString()}`}
+                        ? `Enter & start a fresh round ${(roundId + 1n).toString()}`
+                        : `Enter round ${roundId.toString()}`}
                     </button>
+                    {needMore && (
+                      <p className="muted" style={{ fontSize: 12, marginBottom: 0, marginTop: 6 }}>
+                        You&apos;re the first in — you can enter now, but if nobody else joins
+                        the round is voided and refunded in full.
+                      </p>
+                    )}
                     <p className="muted" style={{ fontSize: 12, marginBottom: 0 }}>
                       Min {cfg ? cfg.minEntrants.toString() : '2'} players. A solo round is voided and fully refunded.
                       {!isOpen && ' This round has closed — entering will settle it and start the next one.'}
