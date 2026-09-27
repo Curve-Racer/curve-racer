@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createWalletClient, custom, http, parseEther, type Address } from 'viem';
 import { publicClient, GAME_ADDRESS, CURVE_ADDRESS, activeChain, isGameDeployed, hasExplorer, explorerTx } from '@/lib/chain';
 import { CURVE_RACER_ABI, VIBE_CURVE_ABI } from '@/lib/abi';
@@ -34,6 +34,11 @@ interface EntrantRow {
 export default function GameBoard() {
   const [account, setAccount] = useState<Address | null>(null);
   const [roundId, setRoundId] = useState<bigint>(ZERO);
+  // The countdown timer below is created once (empty dep array), so it closes
+  // over the roundId from the first render forever. A ref gives it the live
+  // value without tearing the timer down and rebuilding it every tick.
+  const roundIdRef = useRef(roundId);
+  roundIdRef.current = roundId;
   const [round, setRound] = useState<RoundState | null>(null);
   const [entrants, setEntrants] = useState<EntrantRow[]>([]);
   const [myEntry, setMyEntry] = useState<Player | null>(null);
@@ -142,22 +147,37 @@ export default function GameBoard() {
     );
   }, [spot, round]);
 
-  // Countdown ticker. Reads secondsRemaining() from the contract rather than
-  // subtracting block numbers locally — the RPC head and the round's stored
-  // closeBlock are not on a comparable scale, and the local arithmetic made a
-  // live round look closed. 1s cadence matches the ~30s round.
+  // Countdown ticker, and the round-change watcher that goes with it.
+  //
+  // secondsRemaining() alone is not enough now that rounds advance
+  // automatically: if the keeper settles round N, secondsRemaining jumps back
+  // up for round N+1, but this component would still be holding round N's
+  // state and the player's stale entry — showing "You're in this round" on a
+  // round that no longer exists. So watch currentRoundId() and do a full
+  // refresh whenever the chain moves on. 1s cadence matches the ~30s round.
   useEffect(() => {
     if (!isGameDeployed) return;
     let alive = true;
     const tick = async () => {
       try {
         const s = await readSecondsRemaining();
-        if (alive) setSecsLeft(Number(s));
+        if (!alive) return;
+        setSecsLeft(Number(s));
+        // Round id is the cheap canary: one extra tiny eth_call, and it is the
+        // only way to notice an automatic advance while the page sits idle.
+        const id = await readCurrentRoundId();
+        if (alive && id !== roundIdRef.current) {
+          await refresh();
+        }
       } catch { /* keep the last good value */ }
     };
     tick();
     const t = setInterval(tick, 1000);
     return () => { alive = false; clearInterval(t); };
+    // refresh/roundId intentionally excluded: including them would tear down
+    // and rebuild this timer on every state change. The id check inside reads
+    // the latest closure value each tick, which is what we want.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // --- derived ------------------------------------------------------------
@@ -318,6 +338,11 @@ export default function GameBoard() {
                 {myEntry && myEntry.stake > ZERO ? (
                   <>
                     <p className="muted" style={{ fontSize: 13 }}>You&apos;re in this round. Highest PnL at close wins the pot.</p>
+                    {myEntry.paidOut && (
+                      <p className="muted" style={{ fontSize: 12 }}>
+                        You won this round — the pot has been paid to your wallet.
+                      </p>
+                    )}
                   </>
                 ) : (
                   <>
