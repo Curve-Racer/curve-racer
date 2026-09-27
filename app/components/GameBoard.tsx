@@ -6,7 +6,7 @@ import { publicClient, GAME_ADDRESS, CURVE_ADDRESS, activeChain, isGameDeployed,
 import { CURVE_RACER_ABI, VIBE_CURVE_ABI } from '@/lib/abi';
 import {
   Phase, readRoundState, readCurrentRoundId, readEntrants, readEntry, readConfig,
-  readSecondsRemaining, formatSpot, type RoundState, type Entry,
+  readSecondsRemaining, formatSpotNano, type RoundState, type Entry,
 } from '@/lib/game';
 import { roundProgress, statusPill, isRoundOpen, type PlayState } from '@/lib/play';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -327,10 +327,10 @@ export default function GameBoard() {
               <div className="flex flex-wrap items-center justify-between gap-4">
                 <div>
                   <div className="tnum text-4xl font-bold leading-none">
-                    {spot > ZERO ? formatSpot(spot) : '—'}
+                    {spot > ZERO ? formatSpotNano(spot) : '—'}
                   </div>
                   <div className="mt-1 text-[11px] uppercase tracking-wider text-muted-foreground">
-                    ETH per token
+                    nano-ETH per token
                   </div>
                   {entryPrice > ZERO && spot > ZERO && (
                     <div
@@ -369,7 +369,7 @@ export default function GameBoard() {
               </div>
 
               <div className="mt-3 grid grid-cols-2 gap-x-4 gap-y-3 border-t border-border pt-4 text-xs sm:grid-cols-4">
-                <Stat label="Entry price" value={entryPrice > ZERO ? formatSpot(entryPrice) : '—'} />
+                <Stat label="Entry price" value={entryPrice > ZERO ? formatSpotNano(entryPrice) : '—'} />
                 <Stat label="Your stake" value={myEntry?.stake ? `${fmt(myEntry.stake)} ETH` : '—'} />
                 <Stat
                   label="Unrealised PnL"

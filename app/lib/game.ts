@@ -40,24 +40,40 @@ export interface CurveInfo {
 export const ZERO = 0n;
 
 /**
- * Format a bonding-curve spot price for display.
+ * Format a bonding-curve spot price as ETH per token.
  *
- * IMPORTANT: the value is NOT necessarily 1e18-scaled. The Pons curve's
- * spotPriceWad() returns a 1e9-scaled number (live testnet:
- * 3766303257 => 3.766…), even though the name says "Wad". The contract only
- * ever uses these as a RATIO, so its PnL is correct either way — but any
- * display that assumes 18 decimals is off by 1e9. The old code got this
- * accidentally right only because the UI was reading the wrong contract and
- * falling back to the game's own entry price.
+ * spotPriceWad() IS a true 18-decimal wad, despite living on a curve whose
+ * other reserve values are 1e18 too. Verified on-chain: the spot price times
+ * virtualTokenReserve equals virtualEthReserve to 6 decimal places, and the
+ * match is exact at 1e18 and off by 1e9 at 1e9.
  *
- * So: pick the scale from the magnitude rather than assuming one. Anything
- * below 1e6 is not a price we can render meaningfully, and the curve is
- * 1e9-scaled, so divide by 1e9.
+ * So the raw value (~3.56e9) is a price of ~3.56e-9 ETH per token, not 3.56
+ * ETH. At 4dp that renders as 0.0000, which looks like a bug but is correct.
+ * That is why the UI shows it in nano-ETH (gwei-style) instead — see
+ * formatSpotNano.
+ *
+ * `decimals` is DISPLAY precision, not a scale exponent. Passing it to
+ * formatUnits() would divide by 10^decimals and inflate the number.
  */
-export function formatSpot(spotPriceWad: bigint, decimals = 4): string {
+export function formatSpot(spotPriceWad: bigint, decimals = 18): string {
   if (spotPriceWad === ZERO) return '0';
-  // The curve reports in 1e9 units. Normalise to a plain decimal string.
-  const s = formatUnits(spotPriceWad * 10n ** 9n, 18);
+  const s = formatUnits(spotPriceWad, 18);
+  const [whole = '0', frac = ''] = s.split('.');
+  return `${whole}.${frac.slice(0, decimals).padEnd(decimals, '0')}`;
+}
+
+/**
+ * Format a spot price in nano-ETH (1e-9 ETH), which is the natural unit here.
+ *
+ * A wei-per-token price on a bonding curve is on the order of 1e-9 ETH. In
+ * plain ETH it is 0.0000000036 and any reasonable display precision renders
+ * it as a row of zeros, so the headline would be useless. Dividing by 1e9
+ * gives ~3.56, which is both readable and numerically exact — 1 nano-ETH is
+ * exactly 1 gwei, so no precision is invented.
+ */
+export function formatSpotNano(spotPriceWad: bigint, decimals = 4): string {
+  if (spotPriceWad === ZERO) return '0';
+  const s = formatUnits(spotPriceWad, 9);
   const [whole = '0', frac = ''] = s.split('.');
   return `${whole}.${frac.slice(0, decimals).padEnd(decimals, '0')}`;
 }
