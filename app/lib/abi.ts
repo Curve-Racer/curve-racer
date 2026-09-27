@@ -43,6 +43,19 @@ export const CURVE_RACER_ABI = [
   },
   {
     "type": "function",
+    "name": "ROUND_SECONDS",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "approveGameToken",
     "inputs": [
       {
@@ -349,6 +362,16 @@ export const CURVE_RACER_ABI = [
         "internalType": "uint64"
       },
       {
+        "name": "openTimestamp",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "closeTimestamp",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
         "name": "phase",
         "type": "uint8",
         "internalType": "enum CurveRacer.Phase"
@@ -404,6 +427,16 @@ export const CURVE_RACER_ABI = [
       },
       {
         "name": "closeBlock",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "openTimestamp",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "closeTimestamp",
         "type": "uint64",
         "internalType": "uint64"
       },

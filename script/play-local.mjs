@@ -66,53 +66,55 @@ async function main() {
   console.log(`game  ${GAME}\ncurve ${CURVE}\n`);
 
   const cfg = {
-    roundBlocks: await read('ROUND_BLOCKS'),
+    roundSeconds: await read('ROUND_SECONDS'),
     minEntrants: await read('MIN_ENTRANTS'),
     rakeBps: await read('RAKE_BPS'),
   };
-  console.log(`config: ${cfg.roundBlocks} blocks (~${Number(cfg.roundBlocks) / 10}s), ` +
-              `min ${cfg.minEntrants}, rake ${cfg.rakeBps}bps\n`);
+  console.log(`config: ${cfg.roundSeconds}s rounds, min ${cfg.minEntrants}, ` +
+              `rake ${cfg.rakeBps}bps\n`);
 
   const roundId = await read('currentRoundId');
   console.log(`--- round ${roundId} ---`);
 
-  // roundState returns a 9-tuple; viem hands it back as an ARRAY, so fields
+  // roundState returns an 11-tuple; viem hands it back as an ARRAY, so fields
   // must be read positionally. Order matches CurveRacer.roundState:
-  //   0 id, 1 openBlock, 2 closeBlock, 3 phase, 4 totalStake,
-  //   5 pot, 6 rake, 7 entryPriceWad, 8 voided
+  //   0 id, 1 openBlock, 2 closeBlock, 3 openTimestamp, 4 closeTimestamp,
+  //   5 phase, 6 totalStake, 7 pot, 8 rake, 9 entryPriceWad, 10 voided
   // Phase enum is Idle=0, Open=1, Settled=2 — NOT Open=0.
   const PHASE = { IDLE: 0, OPEN: 1, SETTLED: 2 };
   const RS = (st) => ({
-    id: st[0], openBlock: st[1], closeBlock: st[2], phase: Number(st[3]),
-    totalStake: st[4], pot: st[5], rake: st[6], entryPriceWad: st[7], voided: st[8],
+    id: st[0], openBlock: st[1], closeBlock: st[2],
+    openTimestamp: st[3], closeTimestamp: st[4],
+    phase: Number(st[5]),
+    totalStake: st[6], pot: st[7], rake: st[8], entryPriceWad: st[9], voided: st[10],
   });
 
-  // Anvil mines ~10 blocks/sec, so a 30s round can expire before this script
-  // even starts. Settle any closed-but-unsettled round to force a fresh one
-  // open, and require enough headroom to enter twice plus settle.
-  async function ensureOpenRound(minHeadroom = 40n) {
+  // A round can expire before this script even gets going. Headroom is measured
+  // with the contract's own secondsRemaining(), not by subtracting blocks —
+  // the round closes on wall-clock time, so block arithmetic is the wrong
+  // measure of how much room is left.
+  async function ensureOpenRound(minSeconds = 8n) {
     for (let attempt = 0; attempt < 6; attempt++) {
       const id = await read('currentRoundId');
       const st = RS(await read('roundState', [id]));
-      const head = await pub.getBlockNumber();
-      const headroom = st.closeBlock - head;
+      const secsLeft = await read('secondsRemaining');
 
       if (st.phase === PHASE.SETTLED) {
         console.log(`round ${id} settled — waiting for the next to open`);
         await sleep(1200);
         continue;
       }
-      if (st.phase !== PHASE.OPEN || headroom <= 0n) {
-        console.log(`round ${id} not open (phase ${st.phase}, headroom ${headroom}) — settling to roll forward`);
+      if (st.phase !== PHASE.OPEN || secsLeft === 0n) {
+        console.log(`round ${id} not open (phase ${st.phase}, ${secsLeft}s left) — settling to roll forward`);
         await send(w2, GAME, GAME_ABI, 'settle', []);
         continue;
       }
-      if (headroom < minHeadroom) {
-        console.log(`round ${id} only ${headroom} blocks left — rolling forward`);
+      if (secsLeft < minSeconds) {
+        console.log(`round ${id} only ${secsLeft}s left — rolling forward`);
         await send(w2, GAME, GAME_ABI, 'settle', []);
         continue;
       }
-      console.log(`round ${id} OPEN, ${headroom} blocks (~${(Number(headroom) / 10).toFixed(1)}s) headroom`);
+      console.log(`round ${id} OPEN, ${secsLeft}s headroom`);
       return id;
     }
     throw new Error('could not get an open round with headroom');
@@ -136,12 +138,23 @@ async function main() {
   ok('entry price snapshotted once', st.entryPriceWad > 0n,
      formatUnits(st.entryPriceWad, 9) + ' ETH/token');
 
-  // Move the curve up mid-round so PnL diverges between the two players.
-  const priceBefore = st.entryPriceWad;
-  await send(w1, CURVE, CURVE_CTL, 'bumpPrice', [300n]); // +3%
+  // The round's entry price is snapshotted when the round opens, which happens
+  // before this script bumps the mock. So a "+3%" bump on the CURRENT spot can
+  // still land below the entry price, leaving every entrant on a loss. The
+  // winner is then whoever lost least, which is not necessarily the larger
+  // stake. Assert on the contract's own winner rather than assuming B, and
+  // bump the spot by enough to clear the entry price so the PnL path is the
+  // intended "rising curve" one.
+  const entryPrice = st.entryPriceWad;
+  const priceBefore = await pub.readContract({ address: CURVE, abi: CURVE_CTL, functionName: 'spotPriceWad' });
+  // Rise at least 5% above the entry price so the round is unambiguously a win.
+  const needBps = BigInt(Math.ceil(((Number(entryPrice) * 1.05) / Number(priceBefore) - 1) * 10_000)) + 50n;
+  await send(w1, CURVE, CURVE_CTL, 'bumpPrice', [needBps]);
   const priceAfter = await pub.readContract({ address: CURVE, abi: CURVE_CTL, functionName: 'spotPriceWad' });
   ok('curve price moved up', priceAfter > priceBefore,
      `${formatUnits(priceBefore, 9)} -> ${formatUnits(priceAfter, 9)}`);
+  ok('curve rose above the round entry price', priceAfter > entryPrice,
+     `entry ${formatUnits(entryPrice, 9)} -> ${formatUnits(priceAfter, 9)}`);
 
   // B's larger stake should now have the better percentage PnL only if prices
   // differ; with a common entry price both move identically, so compare the
@@ -153,16 +166,19 @@ async function main() {
   ok('pnl scales with stake', pnl2 > pnl1,
      `B stakes 2x A so B pnl is ${Number(pnl2 / pnl1)}x`);
 
-  // Wait out the round window so settle() will accept the call.
-  const target = st.closeBlock;
-  let head = await pub.getBlockNumber();
-  console.log(`\nwaiting for close (block ${target}, at ${head})…`);
-  while (head < target) { await sleep(1000); head = await pub.getBlockNumber(); }
+  // Wait out the round window so settle() will accept the call. Poll the
+  // contract's own clock rather than a block target — the deadline is
+  // wall-clock, and chasing closeBlock would be both wrong and slower.
+  console.log(`\nwaiting for close (${await read('secondsRemaining')}s left)…`);
+  let secsLeft = await read('secondsRemaining');
+  while (secsLeft > 0n) { await sleep(1000); secsLeft = await read('secondsRemaining'); }
   await sleep(500);
-  ok('round window elapsed', (await pub.getBlockNumber()) >= target);
+  ok('round window elapsed', (await read('secondsRemaining')) === 0n);
   // Permissionless settle — anyone may call it, so use B as a neutral party.
-  // Snapshot B's balance first: the payout goes out inside this same call.
-  const balBefore = await pub.getBalance({ address: B });
+  // Snapshot both balances first: the payout goes out inside this same call,
+  // and the winner is whichever player the contract picked.
+  const balBeforeA = await pub.getBalance({ address: A });
+  const balBeforeB = await pub.getBalance({ address: B });
   lastReceipt = await send(w2, GAME, GAME_ABI, 'settle', []);
   const after = RS(await read('roundState', [openRoundId]));
   ok('round settled', after.phase === PHASE.SETTLED, `phase ${after.phase}`);
@@ -176,17 +192,27 @@ async function main() {
      `${formatEther(after.pot)} = ${formatEther(after.totalStake)} - ${formatEther(after.rake)}`);
   ok('not voided (real winner)', after.voided === false);
 
+  // Read the winner the contract actually chose. With a common entry price,
+  // PnL is proportional to stake, so on a rising curve the larger stake (B)
+  // wins — but assert against bestPlayer() rather than hardcoding B, so the
+  // test reports what happened instead of assuming.
+  const [bestPnl, bestPlayer] = await read('leaderboard');
   const e1 = await read('entryOf', [openRoundId, A]);
   const e2 = await read('entryOf', [openRoundId, B]);
-  ok('winner B marked paid', e2.paidOut === true);
-  ok('loser A not marked paid', e1.paidOut === false);
+  const winnerIsB = String(bestPlayer).toLowerCase() === B.toLowerCase();
+  ok('winner is the higher-PnL player', winnerIsB,
+     `bestPlayer ${String(bestPlayer).slice(0, 8)}… pnl ${formatEther(bestPnl)}`);
+  ok('winner marked paid', winnerIsB ? e2.paidOut === true : e1.paidOut === true);
+  ok('loser not marked paid', winnerIsB ? e1.paidOut === false : e2.paidOut === false);
 
-  // payout is sent during settle() to the winner; verify B's balance moved.
-  const balAfter = await pub.getBalance({ address: B });
+  // payout is sent during settle() to the winner; verify their balance moved.
+  const winner = winnerIsB ? B : A;
+  const balBefore = winnerIsB ? balBeforeB : balBeforeA;
+  const balAfter = await pub.getBalance({ address: winner });
   const r = lastReceipt;
   const gas = r ? r.gasUsed * r.effectiveGasPrice : 0n;
   const gained = balAfter - balBefore;
-  ok('winner B balance increased net of gas', gained > 0n,
+  ok('winner balance increased net of gas', gained > 0n,
      `+${formatEther(gained)} ETH (paid ${formatEther(gas)} gas)`);
   ok('payout matches pot', gained + gas >= after.pot,
      `pot ${formatEther(after.pot)} vs net+gain ${formatEther(gained + gas)}`);

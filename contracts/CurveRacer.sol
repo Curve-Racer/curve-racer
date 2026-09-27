@@ -43,6 +43,12 @@ contract CurveRacer {
         uint64 id;
         uint64 openBlock;
         uint64 closeBlock;
+        // Wall-clock bounds. The block pair is a backstop for chains that stall;
+        // the timestamps are what the UI counts down against, because block
+        // production rate is not guaranteed (this testnet measured ~180ms/block,
+        // not the 100ms the block count originally assumed).
+        uint64 openTimestamp;
+        uint64 closeTimestamp;
         Phase phase;
         uint256 totalStake;      // total ETH staked
         uint256 pot;             // totalStake minus rake, paid to winner(s)
@@ -63,9 +69,14 @@ contract CurveRacer {
     // Constants
     // ---------------------------------------------------------------------
 
-    /// @notice Round length in blocks. ~100ms blocks on Robinhood Chain Testnet
-    ///         => 300 blocks ~= 30 seconds.
+    /// @notice Round length in blocks. A hard backstop only: if a chain stalls
+    ///         badly, the round still closes after this many blocks. On this
+    ///         testnet blocks land every ~180ms, so 300 blocks ~= 54s.
     uint64 public constant ROUND_BLOCKS = 300;
+
+    /// @notice Nominal round length in seconds. This is the real deadline the
+    ///         UI counts down to; the block count above is only a safety net.
+    uint64 public constant ROUND_SECONDS = 30;
 
     /// @notice A round needs at least this many entrants to be settleable.
     uint256 public constant MIN_ENTRANTS = 2;
@@ -189,10 +200,23 @@ contract CurveRacer {
         Round storage r = rounds[id];
         r.id = id;
         r.openBlock = uint64(block.number);
+        r.openTimestamp = uint64(block.timestamp);
         r.closeBlock = uint64(block.number) + ROUND_BLOCKS;
+        r.closeTimestamp = uint64(block.timestamp) + ROUND_SECONDS;
         r.phase = Phase.Open;
         r.entryPriceWad = _spotPrice();
         emit RoundOpened(id, r.openBlock, r.closeBlock, r.entryPriceWad);
+    }
+
+    /// @notice True once a round can no longer accept entries.
+    /// @dev Wall-clock is the primary deadline and the block count is a
+    ///      backstop, so a slow or stalled chain cannot keep a round open
+    ///      forever, and a fast one cannot cut it short. Both entry points
+    ///      MUST use this helper — deriving the deadline inline is exactly how
+    ///      the UI and the contract ended up disagreeing about whether a round
+    ///      was still open.
+    function _isClosed(Round storage r) internal view returns (bool) {
+        return block.timestamp >= r.closeTimestamp || block.number >= r.closeBlock;
     }
 
     function _spotPrice() internal view returns (uint256) {
@@ -210,7 +234,7 @@ contract CurveRacer {
     function enter() external payable {
         Round storage r = rounds[currentRoundId];
         if (r.phase != Phase.Open) revert NotOpen();
-        if (block.number >= r.closeBlock) revert RoundClosed();
+        if (_isClosed(r)) revert RoundClosed();
         if (r.entries[msg.sender].stake != 0) revert AlreadyEntered();
         if (msg.value == 0) revert ZeroStake();
 
@@ -228,7 +252,7 @@ contract CurveRacer {
         Round storage r = rounds[currentRoundId];
         if (r.phase == Phase.Idle) revert WrongPhase();
         if (r.phase == Phase.Settled) revert WrongPhase();
-        if (block.number < r.closeBlock) revert RoundNotOver();
+        if (!_isClosed(r)) revert RoundNotOver();
 
         uint64 settledId = r.id;
         uint256 exitPriceWad = _spotPrice();
@@ -398,7 +422,7 @@ contract CurveRacer {
 
         Round storage r = rounds[currentRoundId];
         if (r.phase != Phase.Open) revert NotOpen();
-        if (block.number >= r.closeBlock) revert RoundClosed();
+        if (_isClosed(r)) revert RoundClosed();
         if (r.entries[msg.sender].stake != 0) revert AlreadyEntered();
 
         if (!gameToken.transferFrom(msg.sender, address(this), amount)) revert TransferFailed();
@@ -448,8 +472,10 @@ contract CurveRacer {
     /// @notice Round state as a flat tuple.
     /// @dev `Round` cannot be returned directly because it contains a mapping,
     ///      so the UI reads round state through this. Field order matches
-    ///      Round: id, openBlock, closeBlock, phase, totalStake, pot, rake,
-    ///      entryPriceWad, voided.
+    ///      Round: id, openBlock, closeBlock, openTimestamp, closeTimestamp,
+    ///      phase, totalStake, pot, rake, entryPriceWad, voided.
+    ///      The two timestamp fields are new; consumers must be regenerated
+    ///      against the ABI rather than hand-patched, since the tuple grew.
     function roundState(uint64 roundId)
         external
         view
@@ -457,6 +483,8 @@ contract CurveRacer {
             uint64 id,
             uint64 openBlock,
             uint64 closeBlock,
+            uint64 openTimestamp,
+            uint64 closeTimestamp,
             Phase phase,
             uint256 totalStake,
             uint256 pot,
@@ -466,7 +494,7 @@ contract CurveRacer {
         )
     {
         Round storage r = rounds[roundId];
-        return (r.id, r.openBlock, r.closeBlock, r.phase, r.totalStake, r.pot, r.rake, r.entryPriceWad, r.voided);
+        return (r.id, r.openBlock, r.closeBlock, r.openTimestamp, r.closeTimestamp, r.phase, r.totalStake, r.pot, r.rake, r.entryPriceWad, r.voided);
     }
 
     /// @notice Live leaderboard head: best positive PnL and who achieved it.
@@ -475,11 +503,16 @@ contract CurveRacer {
     }
 
     /// @notice Seconds remaining in the current round, for the UI countdown.
+    /// @dev Real wall-clock seconds, not an estimate derived from block count.
+    ///      This chain's block interval was measured at ~180ms, not the 100ms
+    ///      the old estimate assumed, so a block-derived countdown ran slow and
+    ///      looked frozen. If the block backstop trips first (stalled chain),
+    ///      this still reports 0 so the UI never shows time on a dead round.
     function secondsRemaining() external view returns (uint256) {
         Round storage r = rounds[currentRoundId];
+        if (block.timestamp >= r.closeTimestamp) return 0;
         if (block.number >= r.closeBlock) return 0;
-        uint256 blocksLeft = r.closeBlock - block.number;
-        return (blocksLeft * 100) / 1000; // ~100ms blocks
+        return r.closeTimestamp - uint64(block.timestamp);
     }
 
     receive() external payable { }

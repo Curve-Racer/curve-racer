@@ -141,6 +141,10 @@ contract CurveRacerTest is Test {
     }
 
     function _closeRoundWindow() internal {
+        // Close the round the way the chain would: past the wall-clock deadline
+        // AND past the block backstop. Rolling blocks alone leaves the
+        // timestamp deadline open on chains that warp time slowly.
+        vm.warp(block.timestamp + game.ROUND_SECONDS());
         vm.roll(block.number + game.ROUND_BLOCKS());
     }
 
@@ -157,12 +161,56 @@ contract CurveRacerTest is Test {
     function test_OpensFirstRoundOnDeploy() public view {
         assertEq(game.currentRoundId(), 1);
         assertEq(game.ROUND_BLOCKS(), 300);
+        assertEq(game.ROUND_SECONDS(), 30);
         assertEq(game.MIN_ENTRANTS(), 2);
+    }
+
+    // -----------------------------------------------------------------
+    // round clock — wall-clock deadline, block backstop
+    // -----------------------------------------------------------------
+
+    /// @dev Regression: the countdown used to be derived from block count with
+    ///      an assumed 100ms/block. This chain runs ~180ms/block, so the
+    ///      number under-reported and the UI looked frozen. It must now be real
+    ///      wall-clock seconds, and must hit 0 exactly at the deadline.
+    function test_SecondsRemainingTracksWallClock() public {
+        assertEq(game.secondsRemaining(), game.ROUND_SECONDS(), "full round at open");
+
+        vm.warp(block.timestamp + 10);
+        assertEq(game.secondsRemaining(), 20, "10s elapsed leaves 20s");
+
+        vm.warp(block.timestamp + 19);
+        assertEq(game.secondsRemaining(), 1, "29s elapsed leaves 1s");
+
+        vm.warp(block.timestamp + 1);
+        assertEq(game.secondsRemaining(), 0, "at the deadline it reads 0");
+    }
+
+    /// @dev The wall-clock deadline must close the round on its own, without
+    ///      waiting for the block backstop.
+    function test_RoundClosesOnWallClockAlone() public {
+        _enterRound();
+        vm.warp(block.timestamp + game.ROUND_SECONDS());
+        vm.prank(bob);
+        vm.expectRevert(CurveRacer.RoundClosed.selector);
+        game.enter{value: 1 ether}();
+    }
+
+    /// @dev And the block count still closes it if the chain stalls and time
+    ///      stops advancing — the backstop must not be defeated by a frozen clock.
+    function test_BlockBackstopClosesRoundWhenChainStalls() public {
+        _enterRound();
+        // no vm.warp: pretend the chain stopped producing timed blocks
+        vm.roll(block.number + game.ROUND_BLOCKS());
+        vm.prank(bob);
+        vm.expectRevert(CurveRacer.RoundClosed.selector);
+        game.enter{value: 1 ether}();
+        assertEq(game.secondsRemaining(), 0, "backstop must report 0, not stale time");
     }
 
     function test_EntryPriceMatchesSpotPriceAtOpen() public {
         _enterRound();
-        (, , , , , , , uint256 entryPrice, ) = game.roundState(1);
+        (, , , , , , , , , uint256 entryPrice, ) = game.roundState(1);
         assertEq(entryPrice, BASE_PRICE, "entry price must be the curve spot price");
     }
 
@@ -228,12 +276,12 @@ contract CurveRacerTest is Test {
     function test_LateEntryCannotJoinAtStalePrice() public {
         _enterRound();
         _closeRoundWindow();
-        (, , , , , , , uint256 entryPrice, ) = game.roundState(1);
+        (, , , , , , , , , uint256 entryPrice, ) = game.roundState(1);
         vm.prank(bob);
         vm.expectRevert(CurveRacer.RoundClosed.selector);
         game.enter{value: 1 ether}();
         // entry price never changed, because nobody got in after the fact
-        (, , , , , , , uint256 unchanged, ) = game.roundState(1);
+        (, , , , , , , , , uint256 unchanged, ) = game.roundState(1);
         assertEq(unchanged, entryPrice);
     }
 
@@ -351,7 +399,7 @@ contract CurveRacerTest is Test {
         game.settle();
 
         assertEq(alice.balance, 100 ether, "solo entrant is made whole");
-        (, , , , , , , , bool voided) = game.roundState(1);
+        (, , , , , , , , , , bool voided) = game.roundState(1);
         assertTrue(voided);
         assertEq(address(game).balance, 0, "void round returns every wei");
     }
@@ -365,7 +413,7 @@ contract CurveRacerTest is Test {
         _closeRoundWindow();
         // void only happens under 2 entrants; with 2 it settles normally.
         game.settle();
-        (, , , , , , , , bool voided) = game.roundState(1);
+        (, , , , , , , , , , bool voided) = game.roundState(1);
         assertFalse(voided);
     }
 
@@ -384,7 +432,7 @@ contract CurveRacerTest is Test {
         // Nobody entered. This must not revert.
         game.settle();
 
-        (, , , CurveRacer.Phase phase, , , , , bool voided) = game.roundState(1);
+        (, , , , , CurveRacer.Phase phase, , , , , bool voided) = game.roundState(1);
         assertEq(uint8(phase), uint8(CurveRacer.Phase.Settled), "empty round should settle");
         assertTrue(voided, "empty round should be voided");
         assertEq(game.currentRoundId(), 2, "a fresh round must open");
@@ -401,7 +449,7 @@ contract CurveRacerTest is Test {
         vm.prank(bob);
         game.enter{value: 2 ether}();
 
-        (, , , CurveRacer.Phase phase, uint256 total, , , , ) = game.roundState(2);
+        (, , , , , CurveRacer.Phase phase, uint256 total, , , , ) = game.roundState(2);
         assertEq(uint8(phase), uint8(CurveRacer.Phase.Open), "round 2 should be open");
         assertEq(total, 3 ether, "round 2 should hold both stakes");
     }
@@ -414,7 +462,7 @@ contract CurveRacerTest is Test {
         game.settle();
 
         assertEq(game.currentRoundId(), 2, "a fresh round opens on settle");
-        (, , , CurveRacer.Phase phase, , , , , ) = game.roundState(2);
+        (, , , , , CurveRacer.Phase phase, , , , , ) = game.roundState(2);
         assertEq(uint8(phase), uint8(CurveRacer.Phase.Open), "new round starts open");
     }
 

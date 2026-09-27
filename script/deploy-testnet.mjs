@@ -106,8 +106,9 @@ async function main() {
 
   // Verify the deployed instance.
   const abi = game.abi;
-  const [roundBlocks, minEntrants, rakeBps, treasury, custody, roundId, state] = await Promise.all([
+  const [roundBlocks, roundSeconds, minEntrants, rakeBps, treasury, custody, roundId, state] = await Promise.all([
     pub.readContract({ address: gameAddr, abi, functionName: 'ROUND_BLOCKS' }),
+    pub.readContract({ address: gameAddr, abi, functionName: 'ROUND_SECONDS' }),
     pub.readContract({ address: gameAddr, abi, functionName: 'MIN_ENTRANTS' }),
     pub.readContract({ address: gameAddr, abi, functionName: 'RAKE_BPS' }),
     pub.readContract({ address: gameAddr, abi, functionName: 'treasury' }),
@@ -116,13 +117,18 @@ async function main() {
     pub.readContract({ address: gameAddr, abi, functionName: 'roundState', args: [1n] }),
   ]);
   console.log('\nverified on-chain:');
-  console.log(`  ROUND_BLOCKS     ${roundBlocks}  (~${Number(roundBlocks) / 10}s)`);
+  console.log(`  ROUND_BLOCKS     ${roundBlocks}  (backstop only, ~${Number(roundBlocks) / 10}s)`);
+  console.log(`  ROUND_SECONDS    ${roundSeconds}  (real round length)`);
   console.log(`  MIN_ENTRANTS     ${minEntrants}`);
   console.log(`  RAKE_BPS         ${rakeBps}`);
   console.log(`  treasury         ${treasury}`);
   console.log(`  custodyAvailable ${custody}  (false pre-graduation, as expected)`);
   console.log(`  currentRoundId   ${roundId}`);
-  console.log(`  round 1 entryPx  ${formatUnits(state[7], 9)} ETH/token`);
+  // roundState order: id, openBlock, closeBlock, openTimestamp, closeTimestamp,
+  //                  phase, totalStake, pot, rake, entryPriceWad, voided
+  console.log(`  round 1 phase    ${state[5]}  (1=Open)`);
+  console.log(`  round 1 entryPx  ${formatUnits(state[9], 9)} ETH/token`);
+  console.log(`  secsRemaining    ${await pub.readContract({ address: gameAddr, abi, functionName: 'secondsRemaining' })}`);
   console.log(`  explorer         https://explorer.testnet.chain.robinhood.com/address/${gameAddr}`);
 }
 

@@ -19,6 +19,8 @@ export interface RoundState {
   id: bigint;
   openBlock: bigint;
   closeBlock: bigint;
+  openTimestamp: bigint;
+  closeTimestamp: bigint;
   phase: Phase;
   totalStake: bigint;
   pot: bigint;
@@ -54,17 +56,21 @@ export function shortAddress(a: string): string {
 }
 
 export async function readRoundState(roundId: bigint): Promise<RoundState> {
+  // Field order mirrors CurveRacer.roundState():
+  //   id, openBlock, closeBlock, openTimestamp, closeTimestamp, phase,
+  //   totalStake, pot, rake, entryPriceWad, voided
   const r = (await publicClient.readContract({
     address: GAME_ADDRESS,
     abi: CURVE_RACER_ABI,
     functionName: 'roundState',
     args: [roundId],
-  })) as readonly [bigint, bigint, bigint, number, bigint, bigint, bigint, bigint, boolean];
+  })) as readonly [bigint, bigint, bigint, bigint, bigint, number, bigint, bigint, bigint, bigint, boolean];
   return {
     id: r[0], openBlock: r[1], closeBlock: r[2],
-    phase: r[3] as Phase,
-    totalStake: r[4], pot: r[5], rake: r[6],
-    entryPriceWad: r[7], voided: r[8],
+    openTimestamp: r[3], closeTimestamp: r[4],
+    phase: r[5] as Phase,
+    totalStake: r[6], pot: r[7], rake: r[8],
+    entryPriceWad: r[9], voided: r[10],
   };
 }
 
@@ -96,16 +102,17 @@ export async function readEntry(roundId: bigint, player: Address): Promise<Entry
 }
 
 export async function readConfig() {
-  const [roundBlocks, minEntrants, rakeBps, assetForWager, custodyAvailable, treasury] =
+  const [roundBlocks, roundSeconds, minEntrants, rakeBps, assetForWager, custodyAvailable, treasury] =
     await Promise.all([
       publicClient.readContract({ address: GAME_ADDRESS, abi: CURVE_RACER_ABI, functionName: 'ROUND_BLOCKS' }) as Promise<bigint>,
+      publicClient.readContract({ address: GAME_ADDRESS, abi: CURVE_RACER_ABI, functionName: 'ROUND_SECONDS' }) as Promise<bigint>,
       publicClient.readContract({ address: GAME_ADDRESS, abi: CURVE_RACER_ABI, functionName: 'MIN_ENTRANTS' }) as Promise<bigint>,
       publicClient.readContract({ address: GAME_ADDRESS, abi: CURVE_RACER_ABI, functionName: 'RAKE_BPS' }) as Promise<bigint>,
       publicClient.readContract({ address: GAME_ADDRESS, abi: CURVE_RACER_ABI, functionName: 'assetForWager' }) as Promise<Address>,
       publicClient.readContract({ address: GAME_ADDRESS, abi: CURVE_RACER_ABI, functionName: 'custodyAvailable' }) as Promise<boolean>,
       publicClient.readContract({ address: GAME_ADDRESS, abi: CURVE_RACER_ABI, functionName: 'treasury' }) as Promise<Address>,
     ]);
-  return { roundBlocks, minEntrants, rakeBps, assetForWager, custodyAvailable, treasury };
+  return { roundBlocks, roundSeconds, minEntrants, rakeBps, assetForWager, custodyAvailable, treasury };
 }
 
 export async function readCurveInfo(curveAddress: Address): Promise<CurveInfo> {

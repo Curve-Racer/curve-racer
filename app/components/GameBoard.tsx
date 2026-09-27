@@ -11,10 +11,11 @@ import {
 } from '@/lib/game';
 import { formatEth, formatSpot, shortAddress } from '@/lib/game';
 
-// Robinhood Chain Testnet produces a block roughly every 100ms, which is what
-// makes the 300-block window land on a ~30 second round. Anvil's --block-time
-// is set to match so local timing mirrors the real chain.
-const MS_PER_BLOCK = 100;
+// Round timing is decided on-chain against wall-clock timestamps, not block
+// counts — see ROUND_SECONDS / secondsRemaining() in CurveRacer.sol. The old
+// MS_PER_BLOCK constant assumed 100ms blocks; this testnet measures ~180ms, so
+// block-derived time ran ~80% slow and the countdown appeared frozen. Nothing
+// in the client converts blocks to time any more.
 const ZERO = 0n;
 
 interface Player {
@@ -39,7 +40,7 @@ export default function GameBoard() {
   const [spot, setSpot] = useState<bigint>(ZERO);
   const [entryPrice, setEntryPrice] = useState<bigint>(ZERO);
   const [cfg, setCfg] = useState<{
-    roundBlocks: bigint; minEntrants: bigint; rakeBps: bigint;
+    roundBlocks: bigint; roundSeconds: bigint; minEntrants: bigint; rakeBps: bigint;
     assetForWager: Address; custodyAvailable: boolean; treasury: Address;
   } | null>(null);
   const [stakeInput, setStakeInput] = useState('0.01');
@@ -160,7 +161,10 @@ export default function GameBoard() {
   }, []);
 
   // --- derived ------------------------------------------------------------
-  const totalSecs = cfg ? Math.round(Number(cfg.roundBlocks) * MS_PER_BLOCK / 1000) : 30;
+  // Progress is a fraction of the round's wall-clock length, read from the
+  // contract. The old version reconstructed time from the block count with a
+  // hardcoded 100ms/block, which is wrong on this chain and made the bar crawl.
+  const totalSecs = cfg ? Number(cfg.roundSeconds) : 30;
   const secs = secsLeft ?? 0;
   const elapsed = Math.min(totalSecs, Math.max(0, totalSecs - secs));
   const progress = totalSecs ? (elapsed / totalSecs) * 100 : 0;
