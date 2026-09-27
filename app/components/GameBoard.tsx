@@ -39,6 +39,7 @@ export default function GameBoard() {
   // value without tearing the timer down and rebuilding it every tick.
   const roundIdRef = useRef(roundId);
   roundIdRef.current = roundId;
+
   const [round, setRound] = useState<RoundState | null>(null);
   const [entrants, setEntrants] = useState<EntrantRow[]>([]);
   const [myEntry, setMyEntry] = useState<Player | null>(null);
@@ -109,6 +110,15 @@ export default function GameBoard() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [account]);
 
+  // Same stale-closure trap as roundIdRef, with worse consequences. refresh()
+  // is a useCallback keyed on `account`, so the copy captured when the timer
+  // below was created has account === null — and its `if (account) setMyEntry`
+  // guard then never fires. The ticker would advance the round all day while
+  // myEntry stayed frozen at the old stake, leaving the player stuck on
+  // "You're in this round" permanently. Always call the live callback.
+  const refreshRef = useRef(refresh);
+  refreshRef.current = refresh;
+
   useEffect(() => {
     if (!isGameDeployed) return;
     readConfig().then(setCfg).catch(() => {});
@@ -167,7 +177,7 @@ export default function GameBoard() {
         // only way to notice an automatic advance while the page sits idle.
         const id = await readCurrentRoundId();
         if (alive && id !== roundIdRef.current) {
-          await refresh();
+          await refreshRef.current();
         }
       } catch { /* keep the last good value */ }
     };
