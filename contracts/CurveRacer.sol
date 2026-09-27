@@ -232,9 +232,19 @@ contract CurveRacer {
     ///      original entry price, effectively time-travelling into a round
     ///      that had already resolved.
     function enter() external payable {
+        // Lazy auto-advance. If the current round has already closed, settle it
+        // first and enter the fresh one. The EVM has no scheduler, so nothing
+        // settles on its own; without this, a round that expired while nobody
+        // was playing would sit dead until a human pressed the button, and
+        // anyone trying to enter would be locked out. At most one round can be
+        // expired-and-unsettled at a time, because settle() always opens a
+        // fresh one — so a single call, not a loop.
+        if (rounds[currentRoundId].phase == Phase.Open && _isClosed(rounds[currentRoundId])) {
+            _settleRound();
+        }
+
         Round storage r = rounds[currentRoundId];
         if (r.phase != Phase.Open) revert NotOpen();
-        if (_isClosed(r)) revert RoundClosed();
         if (r.entries[msg.sender].stake != 0) revert AlreadyEntered();
         if (msg.value == 0) revert ZeroStake();
 
@@ -249,6 +259,13 @@ contract CurveRacer {
     /// @dev Permissionless. Under 2 entrants the round is voided and every
     ///      entrant refunds. Ties split the pot evenly.
     function settle() external {
+        _settleRound();
+    }
+
+    /// @dev Settles `rounds[currentRoundId]` and opens the next round.
+    ///      Shared by the permissionless `settle()` and by `enter()`, which
+    ///      calls it to auto-advance past an expired round.
+    function _settleRound() internal {
         Round storage r = rounds[currentRoundId];
         if (r.phase == Phase.Idle) revert WrongPhase();
         if (r.phase == Phase.Settled) revert WrongPhase();
@@ -420,9 +437,13 @@ contract CurveRacer {
         if (!custodyAvailable()) revert WrongPhase();
         if (amount == 0) revert ZeroStake();
 
+        // Same lazy auto-advance as enter() — see the comment there.
+        if (rounds[currentRoundId].phase == Phase.Open && _isClosed(rounds[currentRoundId])) {
+            _settleRound();
+        }
+
         Round storage r = rounds[currentRoundId];
         if (r.phase != Phase.Open) revert NotOpen();
-        if (_isClosed(r)) revert RoundClosed();
         if (r.entries[msg.sender].stake != 0) revert AlreadyEntered();
 
         if (!gameToken.transferFrom(msg.sender, address(this), amount)) revert TransferFailed();

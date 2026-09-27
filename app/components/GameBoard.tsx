@@ -176,8 +176,14 @@ export default function GameBoard() {
 
   // Open = the contract says Open AND its own clock has not run out. Both come
   // from chain reads now, so the UI cannot contradict the contract.
+  // Display-only: is the round the player is LOOKING at still accepting
+  // entries? Entry itself no longer depends on this (see canEnter).
   const isOpen = round?.phase === Phase.Open && secsLeft !== null && secsLeft > 0;
-  const canEnter = isOpen && account && (!myEntry || myEntry.stake === ZERO);
+  // Entry no longer needs the round to be open. If the current round has
+  // expired, enter() settles it and rolls the player into a fresh one in the
+  // same transaction, so the button is always usable — a player is never
+  // locked out by a round that expired while nobody pressed "settle".
+  const canEnter = account && (!myEntry || myEntry.stake === ZERO);
   const needMore = cfg && entrants.length < Number(cfg.minEntrants);
   // The round is over once the contract's clock hits zero, so anyone can
   // settle it — not just people who staked.
@@ -321,10 +327,13 @@ export default function GameBoard() {
                              onChange={(e) => setStakeInput(e.target.value)} />
                     </div>
                     <button onClick={enter} disabled={!canEnter || busy}>
-                      {!isOpen ? 'Round closed' : needMore ? 'Waiting for players…' : `Enter round ${roundId.toString()}`}
+                      {!isOpen
+                        ? `Enter & start a fresh round ${roundId.toString() + 1n}`
+                        : needMore ? 'Waiting for players…' : `Enter round ${roundId.toString()}`}
                     </button>
                     <p className="muted" style={{ fontSize: 12, marginBottom: 0 }}>
                       Min {cfg ? cfg.minEntrants.toString() : '2'} players. A solo round is voided and fully refunded.
+                      {!isOpen && ' This round has closed — entering will settle it and start the next one.'}
                     </p>
                   </>
                 )}

@@ -187,13 +187,20 @@ contract CurveRacerTest is Test {
     }
 
     /// @dev The wall-clock deadline must close the round on its own, without
-    ///      waiting for the block backstop.
+    ///      waiting for the block backstop. enter() now auto-advances past the
+    ///      expired round rather than reverting, so the deadline's effect shows
+    ///      up as a brand new round with a fresh entry price.
     function test_RoundClosesOnWallClockAlone() public {
         _enterRound();
         vm.warp(block.timestamp + game.ROUND_SECONDS());
+        assertEq(game.secondsRemaining(), 0, "wall clock alone must close the round");
+
         vm.prank(bob);
-        vm.expectRevert(CurveRacer.RoundClosed.selector);
         game.enter{value: 1 ether}();
+
+        assertEq(game.currentRoundId(), 2, "entering must roll into a fresh round");
+        (, , , , , , , , , uint256 newEntry, ) = game.roundState(2);
+        assertEq(newEntry, BASE_PRICE, "the new round snapshots its own entry price");
     }
 
     /// @dev And the block count still closes it if the chain stalls and time
@@ -202,10 +209,11 @@ contract CurveRacerTest is Test {
         _enterRound();
         // no vm.warp: pretend the chain stopped producing timed blocks
         vm.roll(block.number + game.ROUND_BLOCKS());
-        vm.prank(bob);
-        vm.expectRevert(CurveRacer.RoundClosed.selector);
-        game.enter{value: 1 ether}();
         assertEq(game.secondsRemaining(), 0, "backstop must report 0, not stale time");
+
+        vm.prank(bob);
+        game.enter{value: 1 ether}();
+        assertEq(game.currentRoundId(), 2, "the backstop must also trigger auto-advance");
     }
 
     function test_EntryPriceMatchesSpotPriceAtOpen() public {
@@ -263,26 +271,78 @@ contract CurveRacerTest is Test {
         game.enter{value: 0}();
     }
 
+    /// @dev Regression guard: a late entrant must never land in the round that
+    ///      already closed, at its stale entry price. enter() now auto-advances
+    ///      instead of reverting, so the property to assert is that the entrant
+    ///      ends up in the NEW round and the old round's entry price is frozen.
     function test_RejectsEntryAfterCloseBlock() public {
         _enterRound();
         _closeRoundWindow();
         vm.prank(bob);
-        vm.expectRevert(CurveRacer.RoundClosed.selector);
         game.enter{value: 1 ether}();
+        assertEq(game.currentRoundId(), 2, "late entrant lands in the new round, not the closed one");
     }
 
-    /// @dev Regression: entering late would otherwise let a player join a
-    ///      round that had already closed, at the original entry price.
+    /// @dev The core anti-time-travel property. Entering late must never be
+    ///      settled at the closed round's original entry price.
     function test_LateEntryCannotJoinAtStalePrice() public {
         _enterRound();
         _closeRoundWindow();
         (, , , , , , , , , uint256 entryPrice, ) = game.roundState(1);
+
         vm.prank(bob);
-        vm.expectRevert(CurveRacer.RoundClosed.selector);
         game.enter{value: 1 ether}();
-        // entry price never changed, because nobody got in after the fact
+
+        // The closed round's entry price never changed...
         (, , , , , , , , , uint256 unchanged, ) = game.roundState(1);
-        assertEq(unchanged, entryPrice);
+        assertEq(unchanged, entryPrice, "closed round entry price must be frozen");
+        // ...and bob's stake is recorded against the new round, not round 1.
+        CurveRacer.Entry memory bobR1 = game.entryOf(1, bob);
+        assertEq(bobR1.stake, 0, "must not stake into an already-closed round");
+        CurveRacer.Entry memory bobR2 = game.entryOf(2, bob);
+        assertEq(bobR2.stake, 1 ether, "stake lands in the fresh round");
+    }
+
+    /// @dev The headline case: a round expires with one player in it. Normally
+    ///      that stake sits stranded until someone presses "settle". Here the
+    ///      NEXT player to enter flushes it automatically — the solo entrant is
+    ///      refunded in full, inside that same transaction, and the new entrant
+    ///      lands in the fresh round. Nobody is ever locked out.
+    function test_EnterAutoAdvancesAndRefundsAbandonedSoloRound() public {
+        _enterRound();
+        assertEq(game.entrants(1).length, 1, "round 1 has exactly one entrant");
+        uint256 aliceBefore = alice.balance;
+
+        _closeRoundWindow();
+        assertEq(game.currentRoundId(), 1, "nobody has advanced the chain yet");
+
+        // bob arrives and simply enters
+        vm.prank(bob);
+        game.enter{value: 1 ether}();
+
+        assertEq(game.currentRoundId(), 2, "enter must have settled round 1 and opened round 2");
+        assertEq(alice.balance, aliceBefore + 1 ether, "solo entrant refunded in full by the auto-settle");
+
+        (, , , , , , , , , , bool voided) = game.roundState(1);
+        assertTrue(voided, "the abandoned round must be marked voided");
+        assertEq(game.totalRoundsSettled(), 1, "settlement counter advanced");
+
+        CurveRacer.Entry memory bobR1 = game.entryOf(1, bob);
+        assertEq(bobR1.stake, 0, "bob must not be recorded in the settled round");
+        CurveRacer.Entry memory bobR2 = game.entryOf(2, bob);
+        assertEq(bobR2.stake, 1 ether, "bob's stake is in the new round");
+    }
+
+    /// @dev Auto-advance must not fire while the round is genuinely still open,
+    ///      or every entry would burn a round. This keeps the optimisation from
+    ///      being a foot-gun.
+    function test_EnterDoesNotAdvanceWhileRoundIsLive() public {
+        _enterRound();
+        vm.prank(bob);
+        game.enter{value: 1 ether}();
+        assertEq(game.currentRoundId(), 1, "a live round must not be settled by an entry");
+        assertEq(game.totalRoundsSettled(), 0, "nothing settled yet");
+        assertEq(game.entrants(1).length, 2, "both players are in the SAME round");
     }
 
     function test_RejectsEarlySettle() public {

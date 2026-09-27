@@ -8,6 +8,9 @@ tsconfig.tsbuildinfo
 # The Curve Racer deployer/creator key lives here and must stay local.
 curve-racer-wallet.json
 *-wallet.json
+curve-racer-keeper.json
+*keeper*.json
 .env
 .env.local
 .env.production
+keeper.log
